@@ -1,13 +1,11 @@
-import re
 import bisect
+from const import StringConst
 
-RE_TAB = re.compile('\t')
-BLANK_FIELD = "_"
 ROOT_TAG = "@#r$%"
-
+BLANK = StringConst.UNDERSCORE
 
 class StatementNode:
-    def __init__(self, idn=0, form=ROOT_TAG, lemma=ROOT_TAG, pos=ROOT_TAG, feats=BLANK_FIELD, slabel=BLANK_FIELD,
+    def __init__(self, idn=0, form=ROOT_TAG, lemma=ROOT_TAG, pos=ROOT_TAG, feats=dict(), slabel=BLANK,
                  dhead=None, deprel=None, ref_label=ROOT_TAG):
         self.id = idn
         self.word_form = form
@@ -58,6 +56,9 @@ class StatementNode:
     def get_dlist(self):
         return self.dependent_list
 
+    def get_feat(self, feat):
+        return self.feats[feat]
+
     def get_subnodelist(self):
         sublist = []
         self.get_sublistaux(self, sublist)
@@ -99,3 +100,6 @@ class StatementNode:
 
     def set_reflabel(self, rlabel):
         self.ref_label = rlabel
+
+    def set_feat(self, key, val):
+        self.feats[key] = val

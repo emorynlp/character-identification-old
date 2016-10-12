@@ -1,0 +1,3 @@
+PIPE = "|"
+EQUAL = "="
+UNDERSCORE = "_"
