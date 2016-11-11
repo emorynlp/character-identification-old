@@ -1,3 +1,0 @@
-PIPE = "|"
-EQUAL = "="
-UNDERSCORE = "_"
