@@ -53,7 +53,8 @@ public class Utterance implements Serializable, Comparable<Utterance>{
 	/* Class body ===================================================================== */
 	private int utterance_id;
 	private String speaker, utterance_raw, statment_raw;
-	private List<StatementNode[]> statement_trees;
+	private String[] tokenized_utterance, tokenized_statement, utterance_annotations, statement_annotations;
+	private StatementNode[][] statement_trees;
 	
 	
 	public Utterance(int utterence_id, String speaker){
@@ -77,9 +78,7 @@ public class Utterance implements Serializable, Comparable<Utterance>{
 		this.speaker = speaker; 
 		utterance_raw = utterance;
 		statment_raw = statement;
-		
-		if(statement_trees == null) this.statement_trees = new ArrayList<>();
-		else						this.statement_trees = new ArrayList<>(statement_trees);
+		this.statement_trees = setStatmentTress((statement_trees == null) ? new ArrayList<>() : new ArrayList<>(statement_trees));
 	}
 	
 	public int getID(){
@@ -97,8 +96,24 @@ public class Utterance implements Serializable, Comparable<Utterance>{
 	public String getStatement(){
 		return statment_raw;
 	}
+
+	public String[] getTokenizedUtterance() {
+		return tokenized_utterance;
+	}
 	
-	public List<StatementNode[]> getStatementTrees(){
+	public String[] getTokenizedStatement() {
+		return tokenized_statement;
+	}
+
+	public String[] getUtteranceAnnotations() {
+		return utterance_annotations;
+	}
+
+	public String[] getStatementAnnotations() {
+		return statement_annotations;
+	}
+	
+	public StatementNode[][] getStatementTrees(){
 		return statement_trees;
 	}
 	
@@ -117,14 +132,29 @@ public class Utterance implements Serializable, Comparable<Utterance>{
 	public String setStatement(String statement){
 		return this.statment_raw = statement;
 	}
+
+	public String[] setTokenizedUtterance(String[] tokenized_utterance) {
+		return this.tokenized_utterance = tokenized_utterance;
+	}
+
+	public String[] setTokenizedStatement(String[] tokenized_statement) {
+		return this.tokenized_utterance = tokenized_statement;
+	}
+
+	public String[] setUtteranceAnnotations(String[] utterance_annotations) {
+		return this.utterance_annotations = utterance_annotations;
+	}
+
+	public String[] setStatementAnnotations(String[] statement_annotations) {
+		return this.statement_annotations= statement_annotations;
+	}
 	
-	public List<StatementNode[]> setStatmentTress(List<StatementNode[]> statement_trees){
-		return this.statement_trees = statement_trees;
+	public StatementNode[][] setStatmentTress(List<StatementNode[]> statement_trees){
+		return this.statement_trees = statement_trees.toArray(new StatementNode[statement_trees.size()][]);
 	}
 	
 	public StatementNode[] addStatementTree(StatementNode[] tree){
-		statement_trees.add(tree);
-		return tree;
+		return statement_trees[statement_trees.length] = tree;
 	}
 
 	@Override

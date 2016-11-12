@@ -11,3 +11,7 @@ buildNumber.properties
 
 # Exclude maven wrapper
 !/.mvn/wrapper/maven-wrapper.jar
+
+# User defined
+bin/
+res/
