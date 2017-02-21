@@ -19,13 +19,14 @@ word2vec_path = "../data/wiki_nyt_w2v_50d.bin"
 # Parameters ##############################################
 nb_filters = 80
 
+gpu_id = -1
 evalOnly = False
-nb_epoch = 120
+nb_epoch = 100
 eval_every = 10
 batch_size = 128
 
 utid = int(time()) % 1e6
-model_out = "../learned_models/mm-cnn.1+2r.f%d.d50.f1.%d.m" % (nb_filters, utid)
+model_out = "../learned_models/mm-cnn.1+2r.f%d.d50.f1+2.%d.m" % (nb_filters, utid)
 
 nb_emb_feats = embdim = dftdim = None
 ###########################################################
@@ -98,14 +99,14 @@ def main():
 
         #### Model training and selection
         print "Initializing and Training model..."
-        model = MentionMentionCNN(nb_embs, embdim, embftdim, len(Xtrn[-1][0]), nb_filters)
+        model = MentionMentionCNN(nb_embs, embdim, embftdim, len(Xtrn[-1][0]), nb_filters, gpu_id=gpu_id)
         model.fit(m_trn, m_dev, Ctrn, Cdev, Xtrn, Ytrn, Xdev, Ydev,
                   eval_every=eval_every, batch_size=batch_size, nb_epoch=nb_epoch, model_out=model_out)
         print ""
 
     #### Evaluate trained model on test
     Xtst, Ytst, tst_cluster_docs_gold = construct_instance_batch(m_tst, nb_embs, embdim, embftdim)
-    model = MentionMentionCNN(nb_embs, embdim, embftdim, len(Xtst[-1][0]), nb_filters)
+    model = MentionMentionCNN(nb_embs, embdim, embftdim, len(Xtst[-1][0]), nb_filters, gpu_id=gpu_id)
     model.load_model(model_out)
     print "Evaluating model performance on test set..."
     tst_cluster_docs_pred = model.decode(m_tst)
