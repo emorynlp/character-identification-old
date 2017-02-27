@@ -1,10 +1,11 @@
 from time import time
 from utils.readers import *
 from utils.transcritps import *
+from collections import Counter
 from components.features import *
-from models.cnn_mm import MentionMentionCNN
 from utils.evaluators import BCubeEvaluator
 from components.oracles import SequentialStaticOracle
+from models.cnn_mm_tran import LABELS, MentionMentionCNN
 
 # Paths ####################################################
 data_in = [
@@ -21,12 +22,12 @@ nb_filters = 80
 
 gpu_id = -1
 evalOnly = False
-nb_epoch = 100
+nb_epoch = 200
 eval_every = 10
 batch_size = 128
 
 utid = int(time()) % 1e6
-model_out = "../learned_models/mm-cnn.1+2r.f%d.d50.f1+2.%d.m" % (nb_filters, utid)
+model_out = "../learned_models/mm-cnn-transition.1+2+3r.f%d.d50.f1sm.%d.m" % (nb_filters, utid)
 
 nb_emb_feats = embdim = dftdim = None
 ###########################################################
@@ -54,8 +55,8 @@ def main():
             pos_tags = pos_tags.union(TranscriptUtils.collect_pos_tags(season))
             dep_labels = dep_labels.union(TranscriptUtils.collect_dep_labels(season))
             ner_tags = ner_tags.union(TranscriptUtils.collect_ner_tags(season))
-
             m_all += mentions
+
             d_trn, d_dev, d_tst = dict(), dict(), dict()
             for m in mentions:
                 scene = m.tokens[0].parent_scene()
@@ -77,7 +78,7 @@ def main():
     print "%d transcript(s) loaded with %d speakers and %d documents (%d mentions). (Trn/Dev/Tst: %d(%d)/%d(%d)/%d(%d))" \
           % (len(data_in), len(speakers), len(m_trn)+len(m_dev)+len(m_tst), len(m_all), len(m_trn), mc_trn, len(m_dev), mc_dev, len(m_tst), mc_tst)
 
-    #### Extracting mention features (Multi-threaded)
+    #### Extracting mention features
     m_all[0].id, m_all[-1].id, start_time = 0, len(m_all) - 1, time()
     for m_idx, m in enumerate(m_all[1:-1], 1):
         m.id, m.m_prev, m.m_next = m_idx, m_all[m_idx-1], m_all[m_idx+1]
@@ -116,7 +117,7 @@ def main():
 
 def construct_instance_batch(mention_docs, nb_embs, embdim, embftdim):
     mm_extractor = MentionPairFeatureExtractor()
-    m1_embs, m2_embs, m1_ebfts, m2_ebfts, mm_dfts, probs, cluster_docs = [], [], [], [], [], [], []
+    m1_embs, m2_embs, m1_ebfts, m2_ebfts, mm_dfts, labels, cluster_docs = [], [], [], [], [], [], []
     for i in range(len(nb_embs)):
         m1_embs.append([])
         m2_embs.append([])
@@ -124,15 +125,16 @@ def construct_instance_batch(mention_docs, nb_embs, embdim, embftdim):
     for mentions in mention_docs:
         oracle = SequentialStaticOracle(mentions)
         m_m2cluster = oracle.mention_to_cluster_map()
-
         cluster_docs.append(list(set(m_m2cluster.values())))
+
+        valid_prev = [mentions[0]]
         for c_idx, curr in enumerate(mentions[1:], 1):
             pos_cluster = m_m2cluster[curr]
 
             curr_ebft = curr.feature.reshape(embftdim)
             curr_embs = [eb.reshape(1, neb, embdim) for eb, neb in zip(curr.embedding, nb_embs)]
 
-            for prev in reversed(mentions[:c_idx]):
+            for prev in reversed(valid_prev):
                 prev_ebft = prev.feature.reshape(embftdim)
                 prev_embs = [eb.reshape(1, neb, embdim) for eb, neb in zip(prev.embedding, nb_embs)]
 
@@ -145,21 +147,29 @@ def construct_instance_batch(mention_docs, nb_embs, embdim, embftdim):
                 mm_dft = mm_extractor.extract((prev, curr))
                 mm_dfts.append(mm_dft)
 
-                if prev in pos_cluster:
-                    probs.append(1.0)
+                if curr == pos_cluster[0]:
+                    if len(pos_cluster) > 1:
+                        labels.append(LABELS.S)
+                        valid_prev.append(curr)
+                    else:
+                        labels.append(LABELS.R)
                     break
-                probs.append(0.0)
+                elif prev in pos_cluster:
+                    labels.append(LABELS.LRS)
+                    valid_prev.append(curr)
+                    valid_prev.remove(prev)
+                    break
+                else:
+                    labels.append(LABELS.P)
 
     m1_embs, m1_ebfts = map(lambda e: np.array(e), m1_embs), np.array(m1_ebfts)
     m2_embs, m2_ebfts = map(lambda e: np.array(e), m2_embs), np.array(m2_ebfts)
     mm_dfts = np.array(mm_dfts)
 
-    pos_count = np.count_nonzero(probs)
-    neg_count = len(probs) - pos_count
-
+    labels_counts = dict([(LABELS.to_class_label(e[0]), e[1]) for e in Counter(labels).items()])
     shape_str = str(map(lambda a: a.shape, m1_embs + m2_embs + [m1_ebfts, m2_ebfts, mm_dfts]))
-    print "#documents: %d, (+): %d, (-): %d, %s" % (len(cluster_docs), pos_count, neg_count, shape_str)
-    return m1_embs + m2_embs + [m1_ebfts, m2_ebfts, mm_dfts], np.array(probs).astype('float32'), cluster_docs
+    print "#documents: %d, %s, %s" % (len(cluster_docs), str(labels_counts), shape_str)
+    return m1_embs + m2_embs + [m1_ebfts, m2_ebfts, mm_dfts], np.array(labels).astype('float32'), cluster_docs
 
 
 if __name__ == "__main__":

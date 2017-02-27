@@ -1,7 +1,7 @@
 import os
 import numpy as np
-from time import time
 import tensorflow as tf
+from utils.timer import Timer
 from keras import backend as K
 from sklearn.metrics import accuracy_score
 from utils.evaluators import BCubeEvaluator
@@ -75,28 +75,34 @@ class MentionMentionCNN:
 
         # Model compilation
         self.model = Model(input=m1_inp_embs + m2_inp_embs + [m1_inp_ebft, m2_inp_ebft, mm_inp_dft], output=prob)
+
+        self.mention_repr = Model(input=m2_inp_embs + [m2_inp_ebft], output=m2_vec)
+        self.mpair_repr = Model(input=m1_inp_embs + m2_inp_embs + [m1_inp_ebft, m2_inp_ebft, mm_inp_dft], output=mm_vec)
+
         self.model.compile(loss='mean_squared_error', optimizer='RMSprop')
 
     def fit(self, mentions_trn, mentions_dev, trn_cluster_docs_gold, dev_cluster_docs_gold,
             Xtrn, Ytrn, Xdev, Ydev, eval_every=1, nb_epoch=20, batch_size=32, model_out=None):
 
         best_trn_scores, best_dev_scores, best_epoch, total_time = ([0]*3, [0]*3, 0, 0)
-        decoder = MentionMentionCNNDecoder()
-        evaluator = BCubeEvaluator()
+        decoder, evaluator = MentionMentionCNNDecoder(), BCubeEvaluator()
 
+        timer = Timer()
         for e in range(nb_epoch/eval_every):
-            global_start_time = time()
+            timer.start('epoch', 'training_step')
             self.model.fit(Xtrn, Ytrn, batch_size=batch_size, nb_epoch=eval_every, shuffle=True, verbose=0)
-            print "Done fitting %d epoch(s) - %.2f" % (eval_every, time() - global_start_time)
+            trn_time = timer.end('training_step')
 
             trn_accuracy = accuracy_score(Ytrn, np.round(self.predict(Xtrn)))
             dev_accuracy = accuracy_score(Ydev, np.round(self.predict(Xdev)))
 
+            timer.start('decoding_step')
             trn_cluster_docs_pred = decoder.decode(self, mentions_trn)
             trn_p, trn_r, trn_f1 = evaluator.evaluate_docs(trn_cluster_docs_gold, trn_cluster_docs_pred)
 
             dev_cluster_docs_pred = decoder.decode(self, mentions_dev)
             dev_p, dev_r, dev_f1 = evaluator.evaluate_docs(dev_cluster_docs_gold, dev_cluster_docs_pred)
+            decode_time = timer.end('decoding_step')
 
             if best_dev_scores[2] < dev_f1:
                 best_epoch = e
@@ -106,16 +112,15 @@ class MentionMentionCNN:
                 if model_out is not None:
                     self.save_model(model_out)
 
-            lapse = time() - global_start_time
-            total_time += lapse
-
+            lapse = timer.end('epoch')
             print 'Epoch %3d - Trn Accu(P/R/F): %.4f(%.4f/%.4f/%.4f), Dev Accu(P/R/F): %.4f(%.4f/%.4f/%.4f) - %4.2fs'\
                   % ((e+1)*eval_every, trn_accuracy, trn_p, trn_r, trn_f1, dev_accuracy, dev_p, dev_r, dev_f1, lapse)
+            print '\tTime breakdown: Train %.2fs, Decode %.2fs' % (trn_time, decode_time)
 
         '\nTraining Summary:'
-        print 'Best epoch: %d, Trn P/R/F: %.6f/%.6f/%.6f, Dev P/R/F : %.6f/%.6f/%.6f - %4.2fs' % \
+        print 'Best epoch: %d, Trn P/R/F: %.6f/%.6f/%.6f, Dev P/R/F : %.6f/%.6f/%.6f' % \
               ((best_epoch+1)*eval_every, best_trn_scores[0], best_trn_scores[1], best_trn_scores[2],
-               best_dev_scores[0], best_dev_scores[1], best_dev_scores[2], total_time)
+               best_dev_scores[0], best_dev_scores[1], best_dev_scores[2])
 
         if model_out is not None:
             print 'Model saved to %s' % model_out
@@ -128,12 +133,16 @@ class MentionMentionCNN:
 
     def load_model(self, file_path):
         try:
-            self.model = load_model(file_path)
+            self.model = load_model(file_path+'.all')
+            self.mpair_repr = load_model(file_path + '.mpair')
+            self.mention_repr = load_model(file_path + '.mrepr')
         except IOError:
             raise IOError("Can't load model file %s" % file_path)
 
     def save_model(self, file_path):
-        save_model(self.model, file_path)
+        save_model(self.model, file_path+'.all')
+        save_model(self.mpair_repr, file_path+'.mpair')
+        save_model(self.mention_repr, file_path+'.mrepr')
 
 
 class MentionMentionCNNDecoder(object):
@@ -147,22 +156,31 @@ class MentionMentionCNNDecoder(object):
             m_m2cluster[mentions[0]] = MentionCluster([mentions[0]])
 
             for c_idx, curr in enumerate(mentions[1:], 1):
-                curr_emb  = [eb.reshape(1, 1, neb, model.embdim) for eb, neb in zip(curr.embedding, model.nb_embs)]
-                curr_ebft = curr.feature.reshape(1, model.embftdim)
+                curr_emb  = [eb.reshape(1, neb, model.embdim) for eb, neb in zip(curr.embedding, model.nb_embs)]
+                curr_ebft = curr.feature.reshape(model.embftdim)
 
-                target = None
-                for prev in reversed(mentions[:c_idx]):
-                    prev_emb  = [eb.reshape(1, 1, neb, model.embdim) for eb, neb in zip(prev.embedding, model.nb_embs)]
-                    prev_ebft = prev.feature.reshape(1, model.embftdim)
+                curr_embs = [np.array([emb]*c_idx) for emb in curr_emb]
+                curr_ebfts = np.array([curr_ebft for _ in xrange(c_idx)])
 
-                    mm_dft = self.mm_extractor.extract((prev, curr)).reshape(1, model.dftdim)
-                    instance = prev_emb + curr_emb + [prev_ebft, curr_ebft, mm_dft]
+                prev_embs, prev_ebfts, mm_dfts = [[] for _ in xrange(len(curr_emb))], [], []
+                for prev in mentions[:c_idx]:
+                    prev_emb  = [eb.reshape(1, neb, model.embdim) for eb, neb in zip(prev.embedding, model.nb_embs)]
+                    prev_ebft = prev.feature.reshape(model.embftdim)
+                    mm_dft = self.mm_extractor.extract((prev, curr)).reshape(model.dftdim)
 
-                    if model.predict(instance)[0][0] > 0.5:
-                        target = m_m2cluster[prev]
-                        break
+                    for gembs, emb in zip(prev_embs, prev_emb):
+                        gembs.append(emb)
+                    prev_ebfts.append(prev_ebft)
+                    mm_dfts.append(mm_dft)
+                prev_embs = map(lambda x: np.array(x), prev_embs)
+                prev_ebfts, mm_dfts = np.array(prev_ebfts), np.array(mm_dfts)
 
-                if target is None:
+                instances = prev_embs + curr_embs + [prev_ebfts, curr_ebfts, mm_dfts]
+                predictions = model.predict(instances)
+
+                if np.amax(predictions) > 0.5:
+                    target = m_m2cluster[mentions[np.argmax(predictions)]]
+                else:
                     target = MentionCluster()
                 target.append(curr)
 

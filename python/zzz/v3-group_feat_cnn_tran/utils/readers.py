@@ -1,6 +1,5 @@
-import re, json
 import numpy as np
-from struct import unpack
+import re, json, struct
 from structures.nodes import *
 from structures.transcipts import *
 
@@ -109,7 +108,7 @@ class TranscriptJsonReader(object):
                                                       utterance_dep_labels[idx] if utterance_dep_labels is not None else None,
                                                       utterance_dep_heads[idx] if utterance_dep_heads is not None else None)
             utterances.append(utterance_nodes)
-            self._parse_mention_nodes(utterance_mentions, utterance_nodes, utterance_annotations[idx])
+            # self._parse_mention_nodes(utterance_mentions, utterance_nodes, utterance_annotations[idx])
 
         for idx, word_forms in enumerate(statement_word_forms):
             statement_nodes = self._parse_token_nodes(word_forms,
@@ -118,7 +117,7 @@ class TranscriptJsonReader(object):
                                                       statement_dep_labels[idx] if statement_dep_labels is not None else None,
                                                       statement_dep_heads[idx] if statement_dep_heads is not None else None)
             statements.append(statement_nodes)
-            self._parse_mention_nodes(statement_mentions, statement_nodes, statement_annotations[idx])
+            # self._parse_mention_nodes(statement_mentions, statement_nodes, statement_annotations[idx])
 
         return Utterance(speaker, utterances, statements)
 
@@ -175,40 +174,64 @@ class TranscriptJsonReader(object):
 ###########################################################
 class Word2VecReader(object):
     @staticmethod
-    def load_bin(filename):
-        fin, d = open(filename, "rb"), dict()
+    def load_bin(file):
+        return Word2VecReader()._load_bin(file)
 
-        vocab_size, vector_dim = map(lambda x: int(x), fin.readline().split())
-        for idx in range(vocab_size):
-            word = ''.join([c for c in iter(lambda: unpack('c', fin.read(1))[0], ' ')])
-            vector = np.array(unpack('<' + 'f' * vector_dim, fin.read(4 * vector_dim)))
-            unpack('c', fin.read(1))  # read off '\n'
-            d[word] = (vector / np.linalg.norm(vector)).astype('float32')
+    def _load_bin(self, file):
+        word2vec = dict()
 
-        return d
+        vsize, dim = map(lambda x: int(x), file.readline().split())
+        for idx in range(vsize):
+            vocab = self._read_word(file)
+            vector = np.array(struct.unpack('<'+'f'*dim, file.read(4*dim)))
+            struct.unpack('c', file.read(1))    # Read off '\n'
+
+            word2vec[vocab] = (vector / np.linalg.norm(vector)).astype('float32')
+
+        return word2vec
+
+    def _read_word(self, stream):
+        buf = []
+        while True:
+            c = struct.unpack('c', stream.read(1))[0]
+            if c not in [' ', '\n']:
+                buf.append(c)
+            else:
+                break
+
+        return "".join(buf)
 
 
 ###########################################################
 # Male/Female/Neutral
 class GenderDataReader(object):
     @staticmethod
-    def load(filename, word_only=False, normalize=False):
-        fin = open(filename, "rb")
-        word_regex, d = re.compile('^[A-Za-z]+$'), dict()
+    def load(file, word_only=False, normalize=False):
+        return GenderDataReader()._load(file, word_only, normalize)
 
-        for line in fin.readlines():
+    def _load(self, file, word_only=False, normalize=False):
+        word2gender = dict()
+
+        word_regex = re.compile('^[A-Za-z]+$')
+        for line in file.readlines():
             string, data = line.lower().split('\t')
             string = string.replace("!", "").strip()
 
-            if not word_only or word_regex.match(string) is not None:
-                vector = map(lambda x: int(x), data.split()[:3])
-                vector = np.array(vector).astype('float32')
-                d[string] = d.get(string, np.zeros(len(vector))) + vector
+            if word_only and word_regex.match(string) is None:
+                continue
+
+            vector = map(lambda x: int(x), data.split()[:3])
+            vector = np.array(vector).astype('float32')
+
+            if string in word2gender:
+                word2gender[string] += vector
+            else:
+                word2gender[string] = vector
 
         if normalize:
-            for string in d.keys():
-                vector = d[string]
+            for string in word2gender.keys():
+                vector = word2gender[string]
                 tcount = float(sum(vector))
-                d[string] = vector / tcount if tcount != 0.0 else vector
+                word2gender[string] = vector / tcount if tcount != 0.0 else vector
 
-        return d
+        return word2gender

@@ -40,9 +40,6 @@ class EntityFeatureExtractor(AbstractFeatureExtractor):
 
 ###########################################################
 class MentionPairFeatureExtractor(AbstractFeatureExtractor):
-    def __init__(self):
-        self.dftdim = 2
-
     def extract(self, mention_pair):
         prev, curr = mention_pair
         p_tokens = " ".join(map(lambda t: t.word_form, prev.tokens))
@@ -83,7 +80,7 @@ def flatten_utterance_statements(utterance):
 
 class MentionFeatureExtractor(AbstractFeatureExtractor):
     def __init__(self, word2vec, word2gender, spks, poss, deps, ners, spk_dim=5, pos_dim=5, dep_dim=5, ner_dim=5):
-        self.word2vec, self.word2vec_dim = word2vec, word2vec.syn0.shape[1]
+        self.word2vec, self.word2vec_dim = word2vec, len(word2vec.values()[0])
         self.word2gender, self.word2gender_dim = word2gender, len(word2gender.values()[0])
 
         self.spk_dim, self.spk2vec = spk_dim, dict([(spk, np.random.rand(spk_dim)) for spk in spks])
